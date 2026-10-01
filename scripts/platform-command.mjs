@@ -1,19 +1,34 @@
 import assert from "node:assert/strict";
+import { win32 } from "node:path";
 
 export function buildCommandInvocation(
   command,
   args,
   platform = process.platform,
+  runtimePath = process.execPath,
 ) {
+  if (platform === "win32" && command === "npm") {
+    const npmCli = win32.join(
+      win32.dirname(runtimePath),
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    );
+    return {
+      command: runtimePath,
+      args: [npmCli, ...args],
+      windowsVerbatimArguments: false,
+    };
+  }
+
   const windowsBatch =
-    platform === "win32" &&
-    (command === "npm" || /\.(?:cmd|bat)$/i.test(command));
+    platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
   if (!windowsBatch) {
     return { command, args, windowsVerbatimArguments: false };
   }
 
-  const executable = command === "npm" ? "npm.cmd" : command;
-  const commandLine = [executable, ...args]
+  const commandLine = [command, ...args]
     .map((value) => {
       assert.doesNotMatch(
         value,
