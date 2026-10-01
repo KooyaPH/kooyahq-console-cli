@@ -86,6 +86,8 @@ jobs:
             git fetch --no-tags origin "refs/tags/$tag:$verify_ref"
             test "$(git rev-parse "$verify_ref^{commit}")" = "$GITHUB_SHA"
           else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" "$GITHUB_SHA" -m "KooyaHQ CLI $tag"
             git push origin "refs/tags/$tag"
           fi
