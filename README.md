@@ -28,7 +28,7 @@ kooyahq update
 
 ## Release contents
 
-Each versioned GitHub Release contains `kooya-cli.tgz` and its `kooya-cli.tgz.sha256` checksum. The tag workflow validates the package name, version, privacy setting, archive contents, and checksum before publishing these two assets. It does not publish to npm.
+Each versioned GitHub Release contains `kooya-cli.tgz` and its `kooya-cli.tgz.sha256` checksum. The private source workflow pushes an asset-only `candidate/v<version>` branch here. Before creating a version tag or GitHub Release, this repository validates the package name, version, privacy setting, archive contents, and checksum, then installs the candidate and checks both commands plus the MCP handshake on macOS, Windows, and Linux. After publication it verifies unauthenticated installation and update on all three systems. It does not publish to npm.
 
 Release tags matching `v*` cannot be updated or deleted after creation.
 
