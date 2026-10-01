@@ -1,46 +1,130 @@
-name: Release CLI assets
+name: Validate and publish CLI release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - "candidate/**"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: cli-candidate-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  validate:
+    name: Audit candidate archive
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Check out tagged release assets
+      - name: Check out candidate assets
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Verify the published tag still targets this event commit
-        shell: bash
+          node-version: "22"
+      - name: Verify candidate branch and assets
+        id: release
         run: |
           set -euo pipefail
-          verify_ref="refs/tags/verify-$GITHUB_REF_NAME"
-          git fetch --no-tags origin "refs/tags/$GITHUB_REF_NAME:$verify_ref"
-          tag_commit="$(git rev-parse "$verify_ref^{commit}")"
-          test "$tag_commit" = "$GITHUB_SHA"
+          tag="${GITHUB_REF_NAME#candidate/}"
+          test "$GITHUB_REF_NAME" = "candidate/$tag"
+          node scripts/verify-release-assets.mjs release-assets "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify release assets
-        run: node scripts/verify-release-assets.mjs release-assets "$GITHUB_REF_NAME"
+  candidate-smoke:
+    name: Install candidate and test MCP (${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the exact candidate archive and test both commands plus MCP
+        run: node scripts/smoke-cli-candidate.mjs "$GITHUB_WORKSPACE/release-assets/kooya-cli.tgz" "${{ needs.validate.outputs.version }}"
 
-      - name: Create GitHub Release
+  publish:
+    name: Tag and publish validated release
+    needs: [validate, candidate-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Create immutable version tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME"
-          --verify-tag
-          release-assets/kooya-cli.tgz
-          release-assets/kooya-cli.tgz.sha256
-          --title "KooyaHQ CLI $GITHUB_REF_NAME"
-          --generate-notes
+        run: |
+          set -euo pipefail
+          tag="${{ needs.validate.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            verify_ref="refs/tags/verify-$tag"
+            git fetch --no-tags origin "refs/tags/$tag:$verify_ref"
+            test "$(git rev-parse "$verify_ref^{commit}")" = "$GITHUB_SHA"
+          else
+            git tag -a "$tag" "$GITHUB_SHA" -m "KooyaHQ CLI $tag"
+            git push origin "refs/tags/$tag"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(gh release view "$tag" --json tagName --jq .tagName)" = "$tag"
+            asset_names="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            for asset in kooya-cli.tgz kooya-cli.tgz.sha256; do
+              if ! printf '%s\n' "$asset_names" | grep -Fxq "$asset"; then
+                gh release upload "$tag" "release-assets/$asset"
+              fi
+            done
+          else
+            gh release create "$tag" \
+              --verify-tag \
+              release-assets/kooya-cli.tgz \
+              release-assets/kooya-cli.tgz.sha256 \
+              --title "KooyaHQ CLI $tag" \
+              --generate-notes
+          fi
+
+  public-smoke:
+    name: Verify public install, updater, and MCP (${{ matrix.os }})
+    needs: [validate, publish]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify unauthenticated download, update, profile preservation, and MCP handshake
+        run: node scripts/smoke-cli-public.mjs "${{ needs.validate.outputs.version }}"
