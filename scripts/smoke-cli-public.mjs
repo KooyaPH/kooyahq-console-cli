@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildCommandInvocation } from "./platform-command.mjs";
 
 const version = process.argv[2];
 assert.match(
@@ -61,32 +62,14 @@ Object.assign(env, {
 });
 
 function run(command, args, options = {}) {
-  const windowsBatch =
-    process.platform === "win32" &&
-    (command === "npm" || /\.(?:cmd|bat)$/i.test(command));
-  const commandLine = windowsBatch
-    ? [command === "npm" ? "npm.cmd" : command, ...args]
-        .map((value) => {
-          assert.doesNotMatch(
-            value,
-            /["%\r\n\0]/u,
-            "unsafe Windows command argument",
-          );
-          return `"${value}"`;
-        })
-        .join(" ")
-    : undefined;
-  const result = spawnSync(
-    windowsBatch ? "cmd.exe" : command,
-    windowsBatch ? ["/d", "/s", "/v:off", "/c", `"${commandLine}"`] : args,
-    {
-      cwd: options.cwd ?? temp,
-      env,
-      encoding: "utf8",
-      timeout: 180_000,
-      windowsVerbatimArguments: windowsBatch,
-    },
-  );
+  const invocation = buildCommandInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: options.cwd ?? temp,
+    env,
+    encoding: "utf8",
+    timeout: 180_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
   if (result.error) throw result.error;
   assert.equal(
     result.status,
