@@ -151,6 +151,7 @@ try {
   const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
   assert.equal(metadata.name, "@kooya/cli");
   assert.equal(metadata.version, version);
+  // This is the first public release; exercise the older-version update path with a local fixture.
   metadata.version = "0.4.1";
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
   const fixturePack = JSON.parse(

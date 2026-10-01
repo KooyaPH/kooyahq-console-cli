@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildCommandInvocation } from "./platform-command.mjs";
 
 const [archive, expectedVersion] = process.argv.slice(2);
 assert.ok(archive && expectedVersion, "pass the candidate tarball and version");
@@ -32,30 +33,14 @@ Object.assign(env, {
 });
 
 function run(command, args) {
-  const windowsBatch = process.platform === "win32" && command === "npm";
-  const commandLine = windowsBatch
-    ? [command, ...args]
-        .map((value) => {
-          assert.doesNotMatch(
-            value,
-            /["%\r\n\0]/u,
-            "unsafe Windows command argument",
-          );
-          return `"${value}"`;
-        })
-        .join(" ")
-    : undefined;
-  const result = spawnSync(
-    windowsBatch ? "cmd.exe" : command,
-    windowsBatch ? ["/d", "/s", "/v:off", "/c", `"${commandLine}"`] : args,
-    {
-      cwd: temp,
-      env,
-      encoding: "utf8",
-      timeout: 180_000,
-      windowsVerbatimArguments: windowsBatch,
-    },
-  );
+  const invocation = buildCommandInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: temp,
+    env,
+    encoding: "utf8",
+    timeout: 180_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
   if (result.error) throw result.error;
   assert.equal(
     result.status,
