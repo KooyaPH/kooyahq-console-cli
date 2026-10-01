@@ -9,9 +9,37 @@ import { pathToFileURL } from 'node:url'
 const PACKAGE_NAME = '@kooya/cli'
 const TARBALL_NAME = 'kooya-cli.tgz'
 const CHECKSUM_NAME = `${TARBALL_NAME}.sha256`
-const MAX_TARBALL_BYTES = 512 * 1024 * 1024
+const MAX_TARBALL_BYTES = 100 * 1024 * 1024
 const MAX_TAR_LIST_BYTES = 16 * 1024 * 1024
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+const STABLE_SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const REQUIRED_FILES = [
+  'package/package.json',
+  'package/README.md',
+  'package/docs/installation.md',
+  'package/docs/codex-mcp.md',
+  'package/docs/scenarios.md',
+  'package/skills/kooyahq-cli/SKILL.md',
+  'package/skills/kooyahq-cli/VERSION',
+  'package/dist/bin/kooyahq.js',
+  'package/dist/bin/kooyahq-mcp.js',
+]
+const ALLOWED_DIRECTORIES = new Set([
+  'package',
+  'package/dist',
+  'package/docs',
+  'package/docs/ai-clients',
+  'package/skills',
+  'package/skills/kooyahq-cli',
+])
+const ALLOWED_AI_CLIENT_GUIDES = new Set([
+  'antigravity.md',
+  'claude.md',
+  'cursor.md',
+  'gemini.md',
+  'hermes.md',
+  'index.md',
+  'web-and-remote.md',
+])
 
 function fail(message) {
   throw new Error(message)
@@ -38,8 +66,14 @@ async function sha256File(path) {
 
 function listArchiveFiles(tarball) {
   let listing
+  let verboseListing
   try {
     listing = execFileSync('tar', ['-tzf', tarball], {
+      encoding: 'utf8',
+      maxBuffer: MAX_TAR_LIST_BYTES,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    verboseListing = execFileSync('tar', ['-tvzf', tarball], {
       encoding: 'utf8',
       maxBuffer: MAX_TAR_LIST_BYTES,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -48,10 +82,17 @@ function listArchiveFiles(tarball) {
     fail(`cannot read release archive: ${error.message}`)
   }
 
-  const entries = listing.split('\n').filter(Boolean)
+  const entries = listing.replace(/\r\n/g, '\n').split('\n').filter(Boolean)
+  const details = verboseListing.replace(/\r\n/g, '\n').split('\n').filter(Boolean)
   if (entries.length === 0) fail('release archive is empty')
+  if (details.length !== entries.length) fail('release archive member types could not be verified')
 
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
+    const expectedType = entry.endsWith('/') ? 'd' : '-'
+    if (details[index][0] !== expectedType) {
+      fail(`release archive contains a non-regular entry: ${entry}`)
+    }
+
     const normalized = entry.replace(/\/+$/, '')
     if (normalized !== 'package' && !normalized.startsWith('package/')) {
       fail(`release archive contains a path outside package/: ${entry}`)
@@ -62,15 +103,46 @@ function listArchiveFiles(tarball) {
       fail(`release archive contains an unsafe path: ${entry}`)
     }
 
-    if (parts.slice(1).some((part) => /^(src|tests?|design)$/i.test(part))) {
-      fail('release archive contains source files (src, tests, or design paths are forbidden)')
+    if (parts.slice(1).some((part) => /^(src|tests?|designs?|research|\.git|\.superpowers)$/i.test(part))
+      || /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|AGENTS\.md|CLAUDE\.md|PLAN\.md|issues\.md|questions\.md)$/.test(normalized)) {
+      fail(`release archive contains private source, tests, design material, credentials, or internal files: ${entry}`)
+    }
+
+    const isAllowedFile = isPublicPackageFile(normalized)
+    const isAllowedDirectory = entry.endsWith('/') && (
+      ALLOWED_DIRECTORIES.has(normalized)
+      || normalized.startsWith('package/dist/')
+      || normalized.startsWith('package/docs/ai-clients/')
+    )
+    if (!isAllowedFile && !isAllowedDirectory) {
+      fail(`release archive contains a file outside the public distribution allowlist: ${entry}`)
     }
   }
 
-  if (!entries.some((entry) => entry.replace(/\/+$/, '') === 'package/package.json')) {
-    fail('release archive is missing package/package.json')
+  for (const requiredFile of REQUIRED_FILES) {
+    const matches = entries.flatMap((entry, index) => (
+      entry.replace(/\/+$/, '') === requiredFile ? [index] : []
+    ))
+    if (matches.length !== 1 || entries[matches[0]].endsWith('/') || details[matches[0]][0] !== '-') {
+      fail(`release archive must contain exactly one required regular file: ${requiredFile}`)
+    }
   }
   return entries
+}
+
+function isPublicPackageFile(path) {
+  if (REQUIRED_FILES.includes(path)) return true
+  const compiledFile = /^package\/dist\/(.+\.js)$/.exec(path)
+  if (compiledFile) {
+    const segments = compiledFile[1].split('/')
+    const filename = segments.pop()
+    const testDirectory = segments.some((segment) => /(?:^|[^a-z0-9])(?:tests?|specs?)(?:[^a-z0-9]|$)/i.test(segment))
+    const testFilename = /(?:^|[._-])tests?(?=[._-]|$)/i.test(filename)
+      || /(?:^|[._-])spec(?=[._-]|$)/i.test(filename)
+    if (!testDirectory && !testFilename) return true
+  }
+  const aiClientGuide = /^package\/docs\/ai-clients\/([^/]+\.md)$/.exec(path)
+  return aiClientGuide !== null && ALLOWED_AI_CLIENT_GUIDES.has(aiClientGuide[1])
 }
 
 function readPackageMetadata(tarball) {
@@ -93,8 +165,8 @@ function readPackageMetadata(tarball) {
 }
 
 export async function verifyReleaseAssets(assetDirectory, tag) {
-  if (typeof tag !== 'string' || !tag.startsWith('v') || !SEMVER.test(tag.slice(1))) {
-    fail('release tag must be v<semver>')
+  if (typeof tag !== 'string' || !STABLE_SEMVER.test(tag)) {
+    fail('release tag must be v<stable-semver>')
   }
   const expectedVersion = tag.slice(1)
 
@@ -122,7 +194,7 @@ export async function verifyReleaseAssets(assetDirectory, tag) {
   const tarballStat = regularFile(tarball, TARBALL_NAME)
   regularFile(checksumPath, CHECKSUM_NAME)
   if (tarballStat.size > MAX_TARBALL_BYTES) {
-    fail(`release archive exceeds the 512 MiB size limit: ${TARBALL_NAME}`)
+    fail(`release archive exceeds the 100 MiB size limit: ${TARBALL_NAME}`)
   }
 
   const checksum = readFileSync(checksumPath, 'utf8')
@@ -137,9 +209,13 @@ export async function verifyReleaseAssets(assetDirectory, tag) {
   if (metadata.name !== PACKAGE_NAME) {
     fail(`release package name must be ${PACKAGE_NAME}`)
   }
-  if (metadata.private === true) fail('release package must not be private')
+  if (metadata.private !== false) fail('release package must explicitly declare private: false')
   if (metadata.version !== expectedVersion) {
     fail(`package version ${metadata.version} does not match release tag ${tag}`)
+  }
+  if (metadata.engines?.node !== '>=22') fail('release package must require Node.js 22 or newer')
+  if (metadata.bin?.kooyahq !== 'dist/bin/kooyahq.js' || metadata.bin?.['kooyahq-mcp'] !== 'dist/bin/kooyahq-mcp.js') {
+    fail('release package must expose both KooyaHQ executables')
   }
 
   return { name: metadata.name, version: metadata.version }
