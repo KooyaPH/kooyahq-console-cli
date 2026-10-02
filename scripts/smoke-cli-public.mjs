@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildArchiveExtractionArgs } from "./archive-extraction.mjs";
 import { buildCommandInvocation } from "./platform-command.mjs";
 
 const version = process.argv[2];
@@ -128,7 +129,7 @@ try {
 
   const unpacked = join(temp, "unpacked");
   mkdirSync(unpacked);
-  run("tar", ["-xzf", archive, "-C", unpacked]);
+  run("tar", buildArchiveExtractionArgs(archive, unpacked, temp));
   const fixtureRoot = join(unpacked, "package");
   const metadataPath = join(fixtureRoot, "package.json");
   const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
