@@ -34,6 +34,7 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME#candidate/}"
           test "$GITHUB_REF_NAME" = "candidate/$tag"
+          node scripts/verify-candidate-branch.mjs "$tag" "$GITHUB_SHA"
           node scripts/verify-release-assets.mjs release-assets "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
@@ -72,15 +73,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Recheck candidate branch head before release write
+        run: node scripts/verify-candidate-branch.mjs "${{ needs.validate.outputs.tag }}" "$GITHUB_SHA"
       - name: Create immutable version tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${{ needs.validate.outputs.tag }}"
+          gh auth setup-git
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
             verify_ref="refs/tags/verify-$tag"
             git fetch --no-tags origin "refs/tags/$tag:$verify_ref"
@@ -94,12 +99,15 @@ jobs:
 
           if gh release view "$tag" >/dev/null 2>&1; then
             test "$(gh release view "$tag" --json tagName --jq .tagName)" = "$tag"
-            asset_names="$(gh release view "$tag" --json assets --jq '.assets[].name')"
-            for asset in kooya-cli.tgz kooya-cli.tgz.sha256; do
-              if ! printf '%s\n' "$asset_names" | grep -Fxq "$asset"; then
-                gh release upload "$tag" "release-assets/$asset"
-              fi
-            done
+            test "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "false"
+            download_dir="$(mktemp -d)"
+            trap 'rm -rf "$download_dir"' EXIT
+            gh release download "$tag" --dir "$download_dir"
+            actual_assets="$(find "$download_dir" -maxdepth 1 -type f -printf '%f\n' | sort)"
+            expected_assets="$(printf '%s\n' kooya-cli.tgz kooya-cli.tgz.sha256 | sort)"
+            test "$actual_assets" = "$expected_assets"
+            cmp --silent release-assets/kooya-cli.tgz "$download_dir/kooya-cli.tgz"
+            cmp --silent release-assets/kooya-cli.tgz.sha256 "$download_dir/kooya-cli.tgz.sha256"
           else
             gh release create "$tag" \
               --verify-tag \
