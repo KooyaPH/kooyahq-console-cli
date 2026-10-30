@@ -66,6 +66,38 @@ test('validates a versioned public asset package and checksum manifest', async (
   assert.deepEqual(result, { name: '@kooya/cli', version: '0.5.0' })
 })
 
+test('allows the published MCP, credential migration, Knowledge, and organization API guides', async (t) => {
+  const fixture = releaseFixture({
+    files: [
+      ['docs/codex-mcp.md', '# MCP setup\n'],
+      ['docs/credential-migration.md', '# Credential migration\n'],
+      ['docs/knowledge.md', '# Knowledge\n'],
+      ['docs/organization-api.md', '# Organization API\n'],
+    ],
+  })
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  const result = await verifyReleaseAssets(fixture.assetDirectory, 'v0.5.0')
+  assert.deepEqual(result, { name: '@kooya/cli', version: '0.5.0' })
+})
+
+test('allows generated declaration files while rejecting declaration tests', async (t) => {
+  const fixture = releaseFixture({
+    files: [
+      ['dist/knowledge/transport.d.ts', 'export declare function createTransport(): void\n'],
+      ['dist/knowledge/transport.test.d.ts', 'declare const testOnly: true\n'],
+    ],
+  })
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  await assert.rejects(verifyReleaseAssets(fixture.assetDirectory, 'v0.5.0'), /private source|allowlist/)
+
+  const publicFixture = releaseFixture({
+    files: [['dist/knowledge/transport.d.ts', 'export declare function createTransport(): void\n']],
+  })
+  t.after(() => rmSync(publicFixture.root, { recursive: true, force: true }))
+  const result = await verifyReleaseAssets(publicFixture.assetDirectory, 'v0.5.0')
+  assert.deepEqual(result, { name: '@kooya/cli', version: '0.5.0' })
+})
+
 test('rejects an invalid tag, a mismatched package name, or a mismatched version', async (t) => {
   const fixture = releaseFixture()
   t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
@@ -99,7 +131,9 @@ test('rejects source, test, and design files in the package archive', async (t) 
     ['internal/server.ts', 'private source'],
     ['.env', 'synthetic credential'],
     ['docs/ai-clients/internal-roadmap.md', 'private roadmap'],
+    ['docs/unreviewed.md', 'unreviewed guide'],
     ['dist/test.js', 'compiled test'],
+    ['dist/test.d.ts', 'compiled test declaration'],
     ['dist/internal-tests.js', 'compiled internal tests'],
     ['dist/test-fixtures/fixture.js', 'compiled test fixture'],
   ]) {
