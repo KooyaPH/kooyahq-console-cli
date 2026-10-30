@@ -46,7 +46,13 @@ try {
         assert.equal(message.id, 2);
         assert.deepEqual(
           message.result.tools.map((tool) => tool.name),
-          ["kooyahq_status", "kooyahq_discover", "kooyahq_call"],
+          [
+            "kooyahq_status",
+            "kooyahq_discover",
+            "kooyahq_call",
+            "kooyahq_api_discover",
+            "kooyahq_api_call",
+          ],
         );
         stage = 2;
         lines.close();
