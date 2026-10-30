@@ -40,6 +40,12 @@ const ALLOWED_AI_CLIENT_GUIDES = new Set([
   'index.md',
   'web-and-remote.md',
 ])
+const ALLOWED_PACKAGE_DOCS = new Set([
+  'package/docs/codex-mcp.md',
+  'package/docs/credential-migration.md',
+  'package/docs/knowledge.md',
+  'package/docs/organization-api.md',
+])
 
 function fail(message) {
   throw new Error(message)
@@ -132,7 +138,8 @@ function listArchiveFiles(tarball) {
 
 function isPublicPackageFile(path) {
   if (REQUIRED_FILES.includes(path)) return true
-  const compiledFile = /^package\/dist\/(.+\.js)$/.exec(path)
+  if (ALLOWED_PACKAGE_DOCS.has(path)) return true
+  const compiledFile = /^package\/dist\/(.+\.(?:js|d\.ts))$/.exec(path)
   if (compiledFile) {
     const segments = compiledFile[1].split('/')
     const filename = segments.pop()
