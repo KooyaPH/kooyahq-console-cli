@@ -11,7 +11,13 @@ const smokeScript = fileURLToPath(
 );
 
 function runFixture({
-  tools = ["kooyahq_status", "kooyahq_discover", "kooyahq_call"],
+  tools = [
+    "kooyahq_status",
+    "kooyahq_discover",
+    "kooyahq_call",
+    "kooyahq_api_discover",
+    "kooyahq_api_call",
+  ],
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kooyahq-mcp-smoke-test-"));
   const serverPath = join(directory, "server.mjs");
