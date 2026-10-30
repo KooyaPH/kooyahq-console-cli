@@ -33,3 +33,5 @@ Each versioned GitHub Release contains `kooya-cli.tgz` and its `kooya-cli.tgz.sh
 Release tags matching `v*` cannot be updated or deleted after creation.
 
 The release package is built from the private source repository. Only the packaged archive and checksum are published here; private source, tests, design files, and credentials must not be included in the package.
+
+If the private source workflow cannot upload its Actions artifact, use the reviewed [artifact quota recovery procedure](docs/artifact-quota-recovery.md). Recovery still creates an asset-only candidate branch and runs this repository's normal release checks.
